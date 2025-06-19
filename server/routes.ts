@@ -59,10 +59,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { name, email, phone, password, role, driving_license } = req.body;
 
-      // Check if user exists
-      const existingUser = await storage.getUserByEmail(email);
+      // Normalize email to lowercase for consistent checking
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Validate required fields
+      if (!name || !normalizedEmail || !phone || !password || !role) {
+        return res.status(400).json({ 
+          message: 'All fields are required',
+          error: 'Missing required fields' 
+        });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(normalizedEmail)) {
+        return res.status(400).json({ 
+          message: 'Please enter a valid email address',
+          error: 'Invalid email format' 
+        });
+      }
+
+      // Validate password length
+      if (password.length < 6) {
+        return res.status(400).json({ 
+          message: 'Password must be at least 6 characters long',
+          error: 'Password too short' 
+        });
+      }
+
+      // Validate role
+      const validRoles = ['customer', 'shopkeeper', 'courier', 'admin'];
+      if (!validRoles.includes(role)) {
+        return res.status(400).json({ 
+          message: 'Invalid role selected',
+          error: 'Invalid role' 
+        });
+      }
+
+      // Check if user exists (case-insensitive)
+      const existingUser = await storage.getUserByEmail(normalizedEmail);
       if (existingUser) {
-        return res.status(400).json({ message: 'Email already registered. Please use a different email or login.' });
+        return res.status(400).json({ 
+          message: 'An account with this email already exists. Please use a different email or try logging in.',
+          error: 'Email already registered'
+        });
+      }
+
+      // Validate driving license for couriers
+      if (role === 'courier' && (!driving_license || driving_license.trim().length === 0)) {
+        return res.status(400).json({ 
+          message: 'Driving license number is required for courier registration',
+          error: 'Missing driving license' 
+        });
       }
 
       // Hash password
@@ -73,13 +121,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create user
       const user = await storage.createUser({
-        name,
-        email,
-        phone,
+        name: name.trim(),
+        email: normalizedEmail,
+        phone: phone.trim(),
         password: hashedPassword,
         role,
         status,
-        driving_license: driving_license || null
+        driving_license: driving_license ? driving_license.trim() : null
       });
 
       // Create approval request for shopkeepers and couriers
@@ -91,8 +139,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
 
         return res.json({
-          message: 'Registration successful. Awaiting admin approval.',
-          requiresApproval: true
+          message: 'Registration successful. Your account is pending admin approval. You will receive an email notification once approved.',
+          requiresApproval: true,
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+            status: user.status
+          }
         });
       }
 
@@ -100,6 +155,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
 
       res.json({
+        message: 'Registration successful! Welcome to Nearbuy.',
         token,
         user: {
           id: user.id,
@@ -110,7 +166,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error('Registration error:', error);
-      res.status(500).json({ message: 'Registration failed' });
+      
+      // Handle specific database errors
+      if (error.message && error.message.includes('unique')) {
+        return res.status(400).json({ 
+          message: 'An account with this email already exists. Please use a different email.',
+          error: 'Email already registered'
+        });
+      }
+      
+      res.status(500).json({ 
+        message: 'Registration failed. Please try again.',
+        error: 'Internal server error'
+      });
     }
   });
 
@@ -118,22 +186,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { email, password } = req.body;
 
-      const user = await storage.getUserByEmail(email);
+      // Normalize email to lowercase
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Validate input
+      if (!normalizedEmail || !password) {
+        return res.status(400).json({ message: 'Email and password are required' });
+      }
+
+      const user = await storage.getUserByEmail(normalizedEmail);
       if (!user) {
-        return res.status(400).json({ message: 'Invalid credentials' });
+        return res.status(400).json({ message: 'Invalid email or password' });
       }
 
       const isPasswordValid = await bcrypt.compare(password, user.password);
       if (!isPasswordValid) {
-        return res.status(400).json({ message: 'Invalid credentials' });
+        return res.status(400).json({ message: 'Invalid email or password' });
       }
 
       if (user.status === 'pending') {
-        return res.status(403).json({ message: 'Account pending approval' });
+        return res.status(403).json({ 
+          message: 'Your account is pending approval. Please wait for admin approval.',
+          status: 'pending'
+        });
       }
 
       if (user.status === 'suspended') {
-        return res.status(403).json({ message: 'Account suspended' });
+        return res.status(403).json({ 
+          message: 'Your account has been suspended. Please contact support.',
+          status: 'suspended'
+        });
+      }
+
+      if (user.status === 'rejected') {
+        return res.status(403).json({ 
+          message: 'Your account application was rejected. Please contact support.',
+          status: 'rejected'
+        });
       }
 
       const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '24h' });
@@ -149,9 +238,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       console.error('Login error:', error);
-      res.status(500).json({ message: 'Login failed' });
+      res.status(500).json({ message: 'Login failed. Please try again.' });
     }
   });
+
+  // Add a debug endpoint to check existing users (only in development)
+  if (process.env.NODE_ENV === 'development') {
+    app.get('/api/debug/users', async (req, res) => {
+      try {
+        const users = await storage.getAllUsers();
+        res.json({
+          count: users.length,
+          users: users.map(u => ({
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role,
+            status: u.status,
+            created_at: u.created_at
+          }))
+        });
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    app.delete('/api/debug/users/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+        const normalizedEmail = email.toLowerCase().trim();
+        
+        // This is a debug endpoint - in production you'd want proper authentication
+        const user = await storage.getUserByEmail(normalizedEmail);
+        if (user) {
+          await storage.deleteUser(user.id);
+          res.json({ message: `User ${normalizedEmail} deleted successfully` });
+        } else {
+          res.status(404).json({ message: 'User not found' });
+        }
+      } catch (error) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+  }
 
   // Shop routes
   app.post('/api/shop', authenticateToken, async (req, res) => {

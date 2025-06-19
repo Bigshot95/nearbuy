@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/neon-http";
 import { neon } from "@neondatabase/serverless";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, ilike } from "drizzle-orm";
 import { users, shops, products, orders, order_items, approvals, type User, type InsertUser, type Shop, type Product, type Order } from "@shared/schema";
 
 if (!process.env.DATABASE_URL) {
@@ -16,6 +16,7 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUserStatus(id: string, status: string): Promise<void>;
+  deleteUser(id: string): Promise<void>;
   
   // Shop methods
   getShop(id: string): Promise<Shop | undefined>;
@@ -63,7 +64,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    // Use case-insensitive search
+    const result = await db.select().from(users).where(ilike(users.email, email)).limit(1);
     return result[0];
   }
 
@@ -74,6 +76,13 @@ export class DatabaseStorage implements IStorage {
 
   async updateUserStatus(id: string, status: string): Promise<void> {
     await db.update(users).set({ status, updated_at: new Date() }).where(eq(users.id, id));
+  }
+
+  async deleteUser(id: string): Promise<void> {
+    // Delete related records first
+    await db.delete(approvals).where(eq(approvals.user_id, id));
+    await db.delete(shops).where(eq(shops.owner_id, id));
+    await db.delete(users).where(eq(users.id, id));
   }
 
   // Shop methods

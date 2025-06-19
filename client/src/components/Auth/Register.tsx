@@ -25,6 +25,29 @@ const Register: React.FC = () => {
     setError('');
     setRegistrationMessage('');
 
+    // Client-side validation
+    if (!formData.name.trim()) {
+      setError('Name is required');
+      return;
+    }
+
+    if (!formData.email.trim()) {
+      setError('Email is required');
+      return;
+    }
+
+    // Email format validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email.trim())) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    if (!formData.phone.trim()) {
+      setError('Phone number is required');
+      return;
+    }
+
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -44,19 +67,28 @@ const Register: React.FC = () => {
 
     try {
       const result = await register({
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
         password: formData.password,
         role: formData.role,
-        drivingLicense: formData.drivingLicense
+        drivingLicense: formData.drivingLicense.trim()
       });
 
       if (result && result.requiresApproval) {
         setRegistrationMessage('Registration successful. Your account is pending approval.');
+      } else {
+        setRegistrationMessage('Registration successful! Welcome to Nearbuy.');
       }
-    } catch (err) {
-      setError('Registration failed. Email may already be in use.');
+    } catch (err: any) {
+      console.error('Registration error:', err);
+      
+      // Handle specific error messages from the server
+      if (err.message) {
+        setError(err.message);
+      } else {
+        setError('Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -67,6 +99,10 @@ const Register: React.FC = () => {
       ...formData,
       [e.target.name]: e.target.value
     });
+    // Clear error when user starts typing
+    if (error) {
+      setError('');
+    }
   };
 
   const roleOptions = [
@@ -127,8 +163,8 @@ const Register: React.FC = () => {
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           {error && (
             <div className="flex items-center space-x-2 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <AlertCircle className="h-5 w-5 text-red-500" />
-              <span className="text-red-700">{error}</span>
+              <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0" />
+              <span className="text-red-700 text-sm">{error}</span>
             </div>
           )}
 
@@ -198,7 +234,7 @@ const Register: React.FC = () => {
 
             <div>
               <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                {t('name')}
+                {t('name')} *
               </label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -217,7 +253,7 @@ const Register: React.FC = () => {
 
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                {t('email')}
+                {t('email')} *
               </label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -229,14 +265,14 @@ const Register: React.FC = () => {
                   value={formData.email}
                   onChange={handleChange}
                   className="pl-10 w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-colors"
-                  placeholder="Enter your email"
+                  placeholder="Enter your email address"
                 />
               </div>
             </div>
 
             <div>
               <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                {t('phone')}
+                {t('phone')} *
               </label>
               <div className="relative">
                 <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -278,7 +314,7 @@ const Register: React.FC = () => {
 
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-                {t('password')}
+                {t('password')} *
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -297,7 +333,7 @@ const Register: React.FC = () => {
 
             <div>
               <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 mb-2">
-                {t('confirmPassword')}
+                {t('confirmPassword')} *
               </label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -321,7 +357,10 @@ const Register: React.FC = () => {
             className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-emerald-600 to-blue-600 hover:from-emerald-700 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
           >
             {loading ? (
-              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              <div className="flex items-center space-x-2">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                <span>Creating Account...</span>
+              </div>
             ) : (
               t('createAccount')
             )}
@@ -335,6 +374,19 @@ const Register: React.FC = () => {
               </Link>
             </p>
           </div>
+
+          {/* Development Helper */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <h4 className="text-sm font-medium text-blue-900 mb-1">Development Tips:</h4>
+              <ul className="text-xs text-blue-800 space-y-1">
+                <li>• Use a unique email for each test registration</li>
+                <li>• Try: test1@example.com, test2@example.com, etc.</li>
+                <li>• Check browser console for detailed error messages</li>
+                <li>• Admin approval required for shopkeepers and couriers</li>
+              </ul>
+            </div>
+          )}
         </form>
       </div>
     </div>
